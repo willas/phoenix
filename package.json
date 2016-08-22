@@ -1,0 +1,19 @@
+{
+  "name": "phoenix",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "async": "^2.0.1",
+    "bluebird": "^3.4.1",
+    "fs": "0.0.2",
+    "phantom": "^2.1.17",
+    "redis": "^2.6.2",
+    "request": "^2.74.0"
+  }
+}
