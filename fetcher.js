@@ -14,7 +14,7 @@ redisClient.on("error", function (err) {
 });
 
 var id = 1;
-var base_url = 'http://localhost:10001';
+var base_url = 'http://api.ffan.com/';
 
 function fetchJobs() {
     var url = base_url + '/api/v1/page/jobs';
