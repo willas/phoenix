@@ -5,20 +5,24 @@ var async = require('async');
 var Promise = require("bluebird");
 var request = require('request');
 
+var config = require('./config');
+RDS_PORT = config.redis.port;
+RDS_HOST = config.redis.host;
+RDS_OPTS = {};
+
 Promise.promisifyAll(redis.RedisClient.prototype);
 Promise.promisifyAll(redis.Multi.prototype);
 
-var redisClient = redis.createClient(6379, '127.0.0.1', {});
+var redisClient = redis.createClient(RDS_PORT, RDS_HOST, RDS_OPTS);
 redisClient.on("error", function (err) {
-    redisClient = redis.createClient(6379, '127.0.0.1', {});
+    redisClient = redis.createClient(RDS_PORT, RDS_HOST, RDS_OPTS);
 });
 
-var id = 1;
-var base_url = 'http://api.ffan.com/';
+var base_url = config.remote;
 
 function report() {
     var multi = redisClient.multi();
-    var redis_key = 'phoenix_report_queue';
+    var redis_key = config.queue.report;
 
     var multi = redisClient.multi();
     multi.lrange(redis_key, 0, -1);

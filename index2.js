@@ -3,6 +3,14 @@ var fs = require('fs');
 var redis = require("redis");
 var async = require('async');
 var Promise = require("bluebird");
+var utils = require('./utils');
+var exec = require('child_process').exec;
+
+var config = require('./config');
+RDS_PORT = config.redis.port;
+RDS_HOST = config.redis.host;
+RDS_OPTS = {};
+
 Promise.promisifyAll(redis.RedisClient.prototype);
 Promise.promisifyAll(redis.Multi.prototype);
 
@@ -29,17 +37,17 @@ function handle_page(url) {
             return sitepage.property('content');
         })
     .then(content => {
-        // console.log(content);
-        // fs.write('/tmp/phantomjs.log', u + "\n", 'a+');
         var u = Date.now() - t;
         console.log(u);
         var data = {};
         data.speed = u;
-        reportMatters('speed', data);
-
+        utils.reportMatters('speed', data, currentJob);
         setTimeout(next_page, 1);
     })
     .catch(error => {
+        var data = {};
+        data.conn_error = error;
+        utils.reportMatters('conn_error', data, currentJob);
         console.log('error: ' +error);
         setTimeout(next_page, 1);
     });
@@ -54,7 +62,15 @@ function start() {
                 sitepage = page;
 
                 sitepage.on('onResourceTimeout', function(request) {
-                    console.log('Response (#' + request.id + '): ' + JSON.stringify(request));
+                    // console.log('Response (#' + request.id + '): ' + JSON.stringify(request));
+                    // var data = {};
+                    // data.res_timeout = JSON.stringify(request);
+                    // utils.reportMatters('res_timeout', data, currentJob);
+                    console.log('ssssssssss');
+                    var cmd = '/usr/local/bin/phantomjs ' + currentJob.url + ' ' +  JSON.stringify(currentJob);
+                    exec(cmd,function(error, stdout, stderr) {
+                        console.log('aasdfas');
+                    });
                 });
 
                 sitepage.on('onError', function(msg, trace) {
@@ -66,30 +82,36 @@ function start() {
                             msgStack.push(' -> ' + t.file + ': ' + t.line + (t.function ? ' (in function "' + t.function +'")' : ''));
                         });
                     }
+                    
+                    // module : speed, conn_error, res_timeout, js_error, page_timeout,res_error
+                    var data = {};
+                    data.js_error = {};
+                    data.js_error.msg = msg;
+                    data.js_error.trace = JSON.stringify(trace);
+                    utils.reportMatters('js_error', data, currentJob);
 
                     console.log(msgStack.join('\n'));
                 });
 
                 sitepage.on('onResourceError', function(resourceError) {
-                    // console.log('Unable to load resource (#' + resourceError.id + 'URL:' + resourceError.url + ')');
-                    // console.log('Error code: ' + resourceError.errorCode + '. Description: ' + resourceError.errorString);
+                    var data = {};
+                    data.res_error = JSON.stringify(resourceError);
+                    utils.reportMatters('res_error', data, currentJob);
                 });
 
-                    // unit: ms
-                    page.setting('resourceTimeout', 7000)
-
-                    setTimeout(next_page, 1);
-                });
+                // unit: 10000ms
+                page.setting('resourceTimeout', 10000);
+                setTimeout(next_page, 1);
+            });
         });
     }
 
     if (redisClient == null) {
-        redisClient = redis.createClient(6379, '127.0.0.1', {});
+        redisClient = redis.createClient(RDS_PORT, RDS_HOST, RDS_OPTS);
         redisClient.on("error", function (err) {
-            redisClient = redis.createClient(6379, '127.0.0.1', {});
+            redisClient = redis.createClient(RDS_PORT, RDS_HOST, RDS_OPTS);
         });
     }
-
 }
 
 function next_page() {
@@ -115,56 +137,8 @@ function next_page() {
 }
 
 function getJob() {
-    var redis_key = 'phoenix_agent_jobs_queue';
+    var redis_key = config.queue.jobs;
     return redisClient.rpopAsync(redis_key);
-}
-
-function reportQalarm(module, code, message) {
-    var message = {};
-    message.type        = 'qalarm';
-    message.project     = 'phoenix';
-    message.module      = module;
-    message.code        = code;
-    message.env         = 'prod';
-    message.time        =  Date.now() / 1000;
-    message.server_ip   =  '';
-    message.client_ip   =  '';
-    message.script      = '';
-    message.message     = message;
-
-    report(message);
-}
-
-function reportMatters(module, data) {
-    var message = {};
-    message.project     = currentJob.project;
-    message.module      = module;
-    message.url         = currentJob.url;
-    message.md5         = currentJob.md5;
-    message.time        =  Date.now() / 1000;
-    message.data        = data;
-
-    report(message);
-}
-
-function report(data) {
-    var multi = redisClient.multi();
-    var redis_key = 'phoenix_report_queue';
-
-    multi.lpush(redis_key, JSON.stringify(data));
-
-    multi.exec(function(err, replices) {
-        console.log(replices);
-    });
-}
-
-function isNullObject(obj){
-    for(var p in obj){
-        if(obj.hasOwnProperty(p)){
-            return false;  //有自有属性或方法，返回false
-        }
-    }
-    return true;  //没有自有属性或方法，返回true，该对象是空对象
 }
 
 start();

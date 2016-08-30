@@ -1,0 +1,12 @@
+{
+  "env" : "dev",
+  "redis" : {
+    "port" : 6379,
+    "host" : "127.0.0.1"
+  },
+  "queue" : {
+      "jobs" : "phoenix_agent_jobs_queue",
+      "report" : "phoenix_agent_report_queue"
+  },
+  "remote" : "http://127.0.0.1:10001"
+}
