@@ -154,6 +154,9 @@ function handle_page(url) {
         }
         
         utils.reportMatters('speed', data, currentJob);
+	sitepage.close();
+        phInstance.exit();
+
         setTimeout(init, 1);
     })
     .catch(error => {
