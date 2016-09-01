@@ -15,10 +15,109 @@ Promise.promisifyAll(redis.RedisClient.prototype);
 Promise.promisifyAll(redis.Multi.prototype);
 
 
+"use strict"; 
+if (!Date.prototype.toISOString) {
+    Date.prototype.toISOString = function () {
+        function pad(n) { return n < 10 ? '0' + n : n; }
+        function ms(n) { return n < 10 ? '00'+ n : n < 100 ? '0' + n : n }
+        return this.getFullYear() + '-' +
+            pad(this.getMonth() + 1) + '-' +
+            pad(this.getDate()) + 'T' +
+            pad(this.getHours()) + ':' +
+            pad(this.getMinutes()) + ':' +
+            pad(this.getSeconds()) + '.' +
+            ms(this.getMilliseconds()) + 'Z';
+    }
+}
+
+function createHAR(address, title, startTime, endTime, resources)
+{
+    var entries = [];
+
+    resources.forEach(function (resource) {
+        var request = resource.request,
+            startReply = resource.startReply,
+            endReply = resource.endReply;
+
+        if (!request || !startReply || !endReply) {
+            return;
+        }
+
+        // Exclude Data URI from HAR file because
+        // they aren't included in specification
+        if (request.url.match(/(^data:image\/.*)/i)) {
+            return;
+	}
+
+        entries.push({
+            // startedDateTime: request.time.toISOString(),
+            startedDateTime: request.time,
+            time: new Date(endReply.time) - new Date(request.time),
+            request: {
+                method: request.method,
+                url: request.url,
+                httpVersion: "HTTP/1.1",
+                cookies: [],
+                headers: request.headers,
+                queryString: [],
+                headersSize: -1,
+                bodySize: -1
+            },
+            response: {
+                status: endReply.status,
+                statusText: endReply.statusText,
+                httpVersion: "HTTP/1.1",
+                cookies: [],
+                headers: endReply.headers,
+                redirectURL: "",
+                headersSize: -1,
+                bodySize: startReply.bodySize,
+                content: {
+                    size: startReply.bodySize,
+                    mimeType: endReply.contentType==null?"":endReply.contentType
+                }
+            },
+            cache: {},
+            timings: {
+                blocked: 0,
+                dns: -1,
+                connect: -1,
+                send: 0,
+                wait: new Date(startReply.time) - new Date(request.time),
+                receive: new Date(endReply.time) - new Date(startReply.time),
+                ssl: -1
+            },
+            pageref: address
+        });
+    });
+
+    return {
+        log: {
+            version: '1.2',
+            creator: {
+                name: "PhantomJS",
+                version: '2.1.1'
+            },
+            pages: [{
+                startedDateTime: startTime.toISOString(),
+                id: address,
+                title: title,
+                pageTimings: {
+                    onLoad: endTime - startTime
+                }
+            }],
+            entries: entries
+        }
+    };
+}
+
+
 var sitepage = null;
 var phInstance = null;
 var redisClient = null;
 var currentJob  = null;
+var harData     = {};
+harData.resources = new Array();
 
 // module : speed, conn_error, res_timeout, js_error, page_timeout
 
@@ -39,10 +138,23 @@ function handle_page(url) {
     .then(content => {
         var u = Date.now() - t;
         console.log(u);
+        
         var data = {};
         data.speed = u;
+
+        // > 300 ms才上报waterfall
+        if (u > 300) {
+            harData.endTime = new Date();
+            harData.title = sitepage.evaluate(function () {
+                return document.title;
+            });
+            harData.title = 'test';
+            har = createHAR('test', harData.title, harData.startTime, harData.endTime, harData.resources);
+            data.waterfall = JSON.stringify(har);
+        }
+        
         utils.reportMatters('speed', data, currentJob);
-        setTimeout(next_page, 1);
+        setTimeout(init, 1);
     })
     .catch(error => {
         var data = {};
@@ -54,23 +166,39 @@ function handle_page(url) {
 }
 
 
-function start() {
-    if (phInstance == null) {
+function init() {
+    // if (phInstance == null) {
         phantom.create().then(instance => {
             phInstance = instance;
             instance.createPage().then(page => {
                 sitepage = page;
+                
+                sitepage.on('onLoadStarted', function () {
+                    harData.startTime = new Date();
+                });
+                
+                sitepage.on('onResourceRequested', function (req) {
+                    harData.resources[req.id] = {
+                        request: req,
+                        startReply: null,
+                        endReply: null
+                    }
+                });
+
+                sitepage.on('onResourceReceived', function (res) {
+                    if (res.stage === 'start') {
+                        harData.resources[res.id].startReply = res;
+                    }
+                    if (res.stage === 'end') {
+                        harData.resources[res.id].endReply = res;
+                    }
+                });
 
                 sitepage.on('onResourceTimeout', function(request) {
                     // console.log('Response (#' + request.id + '): ' + JSON.stringify(request));
                     // var data = {};
                     // data.res_timeout = JSON.stringify(request);
                     // utils.reportMatters('res_timeout', data, currentJob);
-                    console.log('ssssssssss');
-                    var cmd = '/usr/local/bin/phantomjs ' + currentJob.url + ' ' +  JSON.stringify(currentJob);
-                    exec(cmd,function(error, stdout, stderr) {
-                        console.log('aasdfas');
-                    });
                 });
 
                 sitepage.on('onError', function(msg, trace) {
@@ -104,7 +232,7 @@ function start() {
                 setTimeout(next_page, 1);
             });
         });
-    }
+    // }
 
     if (redisClient == null) {
         redisClient = redis.createClient(RDS_PORT, RDS_HOST, RDS_OPTS);
@@ -124,13 +252,15 @@ function next_page() {
         message = JSON.parse(res);
         currentJob = message;
         address = message.url;
+            
+        // reset
+        harData = {};
+        harData.resources = new Array();
 
-        console.log(res);
         if (!address) {
             sitepage.close();
             phInstance.exit();
         }
-        // setTimeout(next_page, 1);
         handle_page(address);
     });
 
@@ -141,4 +271,4 @@ function getJob() {
     return redisClient.rpopAsync(redis_key);
 }
 
-start();
+init();
