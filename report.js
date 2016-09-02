@@ -25,7 +25,7 @@ function report() {
     var redis_key = config.queue.report;
 
     var multi = redisClient.multi();
-    multi.lrange(redis_key, 0, -1);
+    multi.lrange(redis_key, 0, 10);
     // remove all
     multi.del(redis_key);
 
@@ -48,8 +48,9 @@ function report() {
                 return console.error('upload failed:', err);
             }
             console.log('Upload successful!  Server responded with:', body);
+            setTimeout(report, 1);
         });
-        setTimeout(report, 1000);
+
     });
 }
 
